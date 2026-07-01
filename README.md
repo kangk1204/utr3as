@@ -24,11 +24,12 @@ exactly reproducible on any machine with Python ≥ 3.9.
 ## Install
 
 ```bash
-git clone <your-repo-url> utr3as && cd utr3as
+git clone https://github.com/kangk1204/utr3as.git && cd utr3as
 python -m pip install -r requirements.txt   # only needed to run the tests
 ```
 
-No compiled dependencies; `run.py` works against a plain Python install.
+No compiled dependencies; `run.py` works against a plain Python install
+(use `python3` instead of `python` on systems where that is the interpreter name).
 
 ## Quick start
 
@@ -37,8 +38,9 @@ python run.py                 # downloads GENCODE v38, classifies, writes result
 ```
 
 `run.py` fetches the annotation automatically (into `data/`) if it is not already
-present, then writes the tables below and prints a summary. To use a different
-release or a local file:
+present, then writes the tables below and prints a summary. The **first run
+downloads ~46 MB and takes about 1–2 minutes** (parsing ~240k transcripts); later
+runs reuse the cached file. To use a different release or a local file:
 
 ```bash
 python run.py --gencode-version 44          # any GENCODE human release
