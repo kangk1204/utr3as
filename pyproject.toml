@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "utr3as"
+version = "1.0.0"
+description = "Genome-wide classification of alternative splicing within 3'UTRs from a GENCODE annotation"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["genomics", "3'UTR", "alternative splicing", "GENCODE", "transcriptomics"]
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[tool.setuptools]
+packages = ["utr3as"]
