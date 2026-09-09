@@ -6,6 +6,11 @@ Genome-wide classification of alternative splicing within 3′UTRs (AS-3′UTR) 
 and assigns them to one of three classes. The default settings are
 `--level protein_coding --group stop_end`.
 
+The default run writes both the complete Class III set and a selected set for
+subsequent analyses. With GENCODE v38, these contain **127 and 121 genes**,
+respectively. The six excluded genes remain in the initial classification and
+comparison outputs.
+
 The classifier evaluates the classes in the order III, I, then II. With the
 default grouping, it uses these rules:
 
@@ -61,9 +66,13 @@ python run.py --sweep                        # also print a stringency sweep
 | file | contents |
 |------|----------|
 | `gene_classification.tsv` | one row per intron-3′UTR gene ID with its Class (I/II/III) and supporting counts |
-| `class3_genes.tsv` | Class III genes with their primary AS event type |
-| `class3_gene_list.txt` | plain list of Class III gene symbols |
+| `class3_genes.tsv` | complete Class III set before exclusion, with primary AS event types (127 genes with v38 defaults) |
+| `class3_gene_list.txt` | complete Class III gene-symbol list before exclusion |
 | `class3_pairs.tsv` | all unordered pairs of representative 3′UTR-intron signatures within each stop/3′-end group of Class III genes, with AS event types |
+| `class3_retained_genes.tsv` | selected Class III genes for subsequent analyses (121 with v38 defaults); same columns as `class3_genes.tsv` |
+| `class3_retained_gene_list.txt` | selected gene-symbol list for subsequent analyses |
+| `class3_excluded_genes.tsv` | genes excluded by the ≤5 nt rule (six with v38 defaults); supporting pair differences are in `class3_reference_pairs.tsv` |
+| `class3_reference_pairs.tsv` | classifier-selected reference–alternative pairs, total 3′UTR differences, and gene inclusion flags (155 rows, of which 147 have inclusion flag 1 with v38 defaults) |
 | `transcript_architecture.tsv` | per-transcript 3′UTR exon count, length, intron flag |
 | `summary.json` | headline counts (also printed to stdout) |
 
@@ -75,6 +84,18 @@ comparisons of representatives within stop/3′-end groups. With the GENCODE v38
 defaults, these give 155 reference-to-alternative pairs and 172 pair-table rows.
 The `ref_transcript` and `alt_transcript` columns follow enumeration order;
 either transcript can carry the retained intron.
+
+The new `class3_reference_pairs.tsv` follows the classifier's reference choice
+and supplies the pairs used for gene exclusion. Its
+`total_3utr_difference_nt` column counts bases present in one transcript's
+3′UTR but absent from the other. `include_in_subsequent_analyses` is 0 for
+**every pair of an excluded gene**, including pairs with differences above 5 nt.
+The existing `class3_pairs.tsv` continues to contain all pairwise comparisons.
+
+In `summary.json`, `class_III` and `class3_pairs` retain their original,
+pre-exclusion meanings. Selection results are recorded separately under
+`class3_selection`, including `retained_genes`, `excluded_genes`,
+`retained_reference_pairs`, `excluded_gene_symbols`, and the exclusion rule.
 
 ## Options
 
@@ -103,6 +124,12 @@ differences elsewhere in the CDS. The driver performs AS event typing within
 some pairs supporting a Class III assignment may therefore be absent from the
 event-type outputs.
 
+The ≤5 nt selection uses the classifier's reference–alternative pairs under
+the chosen `--group`. With `stop` or `cds`, these pairs can have different
+mRNA 3′ ends, so their total 3′UTR differences can include terminal changes.
+Use `--group stop_end` for the manuscript's internal-splicing selection.
+The sensitivity sweep reports initial class counts before this exclusion.
+
 ## Method
 
 1. Parse GENCODE on chr1-22, chrX, chrY and chrM. Keep transcripts with at least
@@ -127,10 +154,19 @@ event-type outputs.
    `summary.json`'s `class3_as_type_clean` first excludes `complex` pair calls
    and counts only genes with at least one remaining call; table primary types
    use all pair calls.
+6. For each classifier-selected reference–alternative pair, measure the total
+   number of bases present in exactly one of the two 3′UTRs (the symmetric
+   difference of their annotated 3′UTR interval sets). Exclude an entire gene
+   from subsequent analyses if **any** such pair differs by **≤5 nt**. This
+   step does not change its initial class or its primary AS type. It uses
+   3′UTR sequence differences, not whole-exon lengths, the smallest changed
+   segment, or the absolute difference between total transcript lengths.
+   For example, a 4-nt loss plus a 5-nt gain counts as 9 nt, not 1 nt.
 
 See [`utr3as/classify.py`](utr3as/classify.py) for classification,
-[`utr3as/filters.py`](utr3as/filters.py) for transcript filters, and
-[`run.py`](run.py) for pair enumeration and output summaries.
+[`utr3as/filters.py`](utr3as/filters.py) for transcript filters,
+[`utr3as/selection.py`](utr3as/selection.py) for subsequent-analysis selection,
+and [`run.py`](run.py) for pair enumeration and output summaries.
 
 ## GENCODE v38 reference counts
 
@@ -142,8 +178,11 @@ With GENCODE v38 (GRCh38), `--level protein_coding --group stop_end` gives:
 | Intron-containing 3′UTR gene IDs | 2,714 |
 | Class I | 1,611 |
 | Class II | 976 |
-| Class III | 127 |
-| Class III reference-to-alternative pairs | 155 |
+| Class III before exclusion | 127 |
+| Class III reference-to-alternative pairs before exclusion | 155 |
+| Class III genes excluded by the ≤5 nt rule | 6 |
+| Class III genes selected for subsequent analyses | 121 |
+| Reference-to-alternative pairs in the selected genes | 147 |
 
 Gene classification counts use GENCODE gene IDs. In this release, the 2,714
 intron-containing gene records correspond to 2,711 unique gene symbols because
@@ -151,9 +190,24 @@ CD99, CRLF2 and CSF2RA each have separate X and PAR_Y records. Gene-symbol
 comparisons require a separately deduplicated symbol set.
 
 The clean primary AS-type counts are IR 79, A3SS 30, ES/MXE 12, and A5SS 6
-(127 genes in total). The CLI reports the complete Class III set without an
-exon-length filter. If a downstream analysis uses a subset, report its gene
-list and filtering criteria separately.
+(127 genes before exclusion). Use this complete set for the initial Class III
+classification, its AS-type distribution, and comparisons with published
+gene sets. Use the separately saved 121-gene set for subsequent analyses that
+apply the ≤5 nt exclusion criterion.
+
+The excluded genes are *GNAS*, *KCNH4*, *KLHDC4*, *KRTCAP3*, *PNCK*, and
+*TEX51*. Their qualifying reference pairs differ by 3 or 4 nt. *GNAS* also has
+45- and 48-nt reference-pair differences, but its 3-nt pair excludes the whole
+gene. Thus six genes and eight reference–alternative pairs are removed, leaving
+121 genes and 147 pairs. The retained primary AS-type counts are IR 79, A3SS 26,
+ES/MXE 11, and A5SS 5. These counts are calculated from the annotation, not fixed
+in the selection code, and can change with the annotation or options.
+
+The reference annotation is `gencode.v38.annotation.gtf.gz` (GRCh38), with SHA256:
+
+```text
+22020df0d3356e965868f4b193e89fa13e838b950a574349f7fcd461ac01c050
+```
 
 ## Analysis scope
 
@@ -163,6 +217,10 @@ comparisons need separate reference files and gene-identifier mapping scripts.
 Gene-symbol comparisons measure gene overlap; event-level agreement requires
 transcript or splice-junction matching.
 
+The CLI generates the two gene sets and the selection evidence. It does not
+run GO enrichment, reproduce published length statistics, or establish which
+gene set was used in an existing downstream analysis.
+
 ## Tests
 
 ```bash
@@ -170,7 +228,14 @@ pytest -q
 ```
 
 Synthetic unit tests run with no data; ground-truth tests run automatically once a
-GENCODE GTF has been downloaded.
+GENCODE v38 GTF has been downloaded into `data/`. The selection regression checks
+the exact 121-gene membership against `tests/data/gencode_v38_retained_genes.tsv`,
+the six exclusions, and the 155-to-147 reference-pair counts. To run this
+regression using an existing annotation elsewhere:
+
+```bash
+UTR3AS_TEST_GTF=/path/to/gencode.v38.annotation.gtf.gz pytest -q tests/test_selection.py
+```
 
 ## License
 

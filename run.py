@@ -12,6 +12,10 @@ Outputs (in --outdir, default ``results/``):
     class3_genes.tsv              Class III genes with their primary AS event type
     class3_pairs.tsv              every Class III isoform pair with its AS event type
     class3_gene_list.txt          plain list of Class III gene symbols
+    class3_retained_genes.tsv     genes selected for subsequent analyses
+    class3_retained_gene_list.txt selected gene symbols (121 with v38 defaults)
+    class3_excluded_genes.tsv     genes excluded by the <=5 nt difference rule
+    class3_reference_pairs.tsv    reference pairs, total differences, gene inclusion
     summary.json                  headline counts (also printed to stdout)
 """
 import argparse
@@ -29,6 +33,7 @@ from utr3as.classify import (  # noqa: E402
 )
 from utr3as.as_types import classify_pair, primary_gene_as_type  # noqa: E402
 from utr3as.filters import apply_filter, DEFAULT_FILTER, SWEEP_ORDER  # noqa: E402
+from utr3as.selection import select_class3_genes, MAX_SHORT_DIFFERENCE_NT  # noqa: E402
 
 GENCODE_URL = ("https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/"
                "release_{v}/gencode.v{v}.annotation.gtf.gz")
@@ -89,6 +94,34 @@ def as_type_calls(class3, by_gene, arch, sub):
     return pair_rows, gene_primary, clean_by_gene
 
 
+def write_class3_genes(path, genes, gene_primary):
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh, delimiter="\t")
+        w.writerow(["gene_id", "gene_name", "strand", "n_class3_pairs",
+                    "n_distinct_alt_utr", "primary_as_type"])
+        for gc in sorted(genes, key=lambda g: g.gene_name):
+            w.writerow([gc.gene_id, gc.gene_name, gc.strand, gc.n_class3_pairs,
+                        gc.n_distinct_alt_utr, gene_primary[gc.gene_id]])
+
+
+def write_selection_tables(outdir, retained, excluded, gene_primary, reference_pairs):
+    for filename, genes in (("class3_retained_genes.tsv", retained),
+                            ("class3_excluded_genes.tsv", excluded)):
+        write_class3_genes(os.path.join(outdir, filename), genes, gene_primary)
+    with open(os.path.join(outdir, "class3_retained_gene_list.txt"), "w",
+              encoding="utf-8") as fh:
+        for symbol in sorted({g.gene_name for g in retained if g.gene_name}):
+            fh.write(symbol + "\n")
+    with open(os.path.join(outdir, "class3_reference_pairs.tsv"), "w",
+              newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, delimiter="\t", fieldnames=[
+            "gene_id", "gene_name", "ref_transcript", "alt_transcript",
+            "as_event_type", "ref_utr3_nt", "alt_utr3_nt",
+            "total_3utr_difference_nt", "include_in_subsequent_analyses"])
+        writer.writeheader()
+        writer.writerows(reference_pairs)
+
+
 def write_tables(outdir, arch, gene_classes, class3, gene_primary, pair_rows):
     os.makedirs(outdir, exist_ok=True)
 
@@ -115,14 +148,7 @@ def write_tables(outdir, arch, gene_classes, class3, gene_primary, pair_rows):
                         gc.n_class3_pairs, gc.n_stop_codons,
                         gene_primary.get(gc.gene_id, "")])
 
-    with open(os.path.join(outdir, "class3_genes.tsv"), "w",
-              newline="", encoding="utf-8") as fh:
-        w = csv.writer(fh, delimiter="\t")
-        w.writerow(["gene_id", "gene_name", "strand", "n_class3_pairs",
-                    "n_distinct_alt_utr", "primary_as_type"])
-        for gc in sorted(class3, key=lambda g: g.gene_name):
-            w.writerow([gc.gene_id, gc.gene_name, gc.strand, gc.n_class3_pairs,
-                        gc.n_distinct_alt_utr, gene_primary[gc.gene_id]])
+    write_class3_genes(os.path.join(outdir, "class3_genes.tsv"), class3, gene_primary)
 
     with open(os.path.join(outdir, "class3_pairs.tsv"), "w",
               newline="", encoding="utf-8") as fh:
@@ -175,6 +201,8 @@ def main():
     class3 = [gc for gc in gene_classes.values() if gc.utr_class == CLASS_III]
     pair_rows, gene_primary, clean_by_gene = as_type_calls(class3, by_gene, arch, sub)
     write_tables(args.outdir, arch, gene_classes, class3, gene_primary, pair_rows)
+    retained, excluded, reference_pairs = select_class3_genes(class3, arch, sub)
+    write_selection_tables(args.outdir, retained, excluded, gene_primary, reference_pairs)
 
     cc = Counter(g.utr_class for g in gene_classes.values())
     n_intron = len(gene_classes)
@@ -190,6 +218,18 @@ def main():
         "class_III": cc[CLASS_III],
         "class3_pairs": sum(gc.n_class3_pairs for gc in class3),
         "class3_as_type_clean": dict(clean_by_gene),
+        "class3_selection": {
+            "unit": "gene",
+            "pair_set": "classifier_reference_to_alternative",
+            "metric": "total_3utr_symmetric_difference_nt",
+            "exclude_if_any_pair_difference_le_nt": MAX_SHORT_DIFFERENCE_NT,
+            "retained_genes": len(retained),
+            "excluded_genes": len(excluded),
+            "retained_reference_pairs": sum(g.n_class3_pairs for g in retained),
+            "excluded_gene_symbols": sorted({g.gene_name for g in excluded}),
+            "retained_primary_as_types": dict(Counter(
+                gene_primary[g.gene_id] for g in retained)),
+        },
     }
     with open(os.path.join(args.outdir, "summary.json"), "w", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=2)
@@ -200,7 +240,14 @@ def main():
     print(f"  Class I   (alt stop codon)    : {cc[CLASS_I]:,}")
     print(f"  Class II  (alt polyadenylation): {cc[CLASS_II]:,}")
     print(f"  Class III (alt splicing)      : {cc[CLASS_III]:,}")
-    print(f"  Class III AS event types      : {dict(clean_by_gene)}")
+    print(f"  Class III AS types (all genes): {dict(clean_by_gene)}")
+    print(f"  Class III retained for subsequent analyses: {len(retained):,}")
+    print(f"  Retained reference-to-alternative pairs   : "
+          f"{summary['class3_selection']['retained_reference_pairs']:,}")
+    print(f"  Genes excluded (any reference pair <=5 nt): {len(excluded):,}")
+    if args.group != "stop_end":
+        print("  [selection] Nondefault grouping can include terminal 3'UTR differences; "
+              "use --group stop_end for the manuscript selection.")
     print(f"\n  wrote tables + summary.json to {args.outdir}/")
 
 
